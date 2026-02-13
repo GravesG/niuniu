@@ -2,6 +2,7 @@
   const CLIENT_KEY = "niuniu-client-id";
   const ROOM_KEY = "niuniu-last-room";
   const VOICE_ENABLED_KEY = "niuniu-voice-enabled";
+  const TTS_BASE_KEY = "niuniu-tts-base-url";
   const RANK_DESC = ["K", "Q", "J", "10", "9", "8", "7", "6", "5", "4", "3", "2", "A"];
   const SUITS = [
     { id: "spade", label: "黑桃" },
@@ -64,6 +65,9 @@
     lastAnnouncedHistoryId: "",
     voiceEnabled: loadVoiceEnabled(),
     voicePrimed: false,
+    ttsBaseUrl: loadTtsBaseUrl(),
+    ttsAudio: null,
+    ttsObjectUrl: "",
     pendingBankerId: ""
   };
 
@@ -154,6 +158,33 @@
 
   function normalizeRoomId(txt) {
     return String(txt || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
+  }
+
+  function normalizeTtsBaseUrl(txt) {
+    const raw = String(txt || "").trim();
+    if (!raw) return "";
+    return raw.replace(/\/+$/, "");
+  }
+
+  function defaultTtsBaseUrl() {
+    const proto = window.location.protocol === "https:" ? "https:" : "http:";
+    return `${proto}//${window.location.hostname}:8000`;
+  }
+
+  function loadTtsBaseUrl() {
+    const urlObj = new URL(window.location.href);
+    const fromQuery = normalizeTtsBaseUrl(urlObj.searchParams.get("tts"));
+    if (fromQuery) {
+      localStorage.setItem(TTS_BASE_KEY, fromQuery);
+      return fromQuery;
+    }
+
+    const fromStorage = normalizeTtsBaseUrl(localStorage.getItem(TTS_BASE_KEY));
+    if (fromStorage) return fromStorage;
+
+    const fallback = defaultTtsBaseUrl();
+    localStorage.setItem(TTS_BASE_KEY, fallback);
+    return fallback;
   }
 
   function refreshCreateBankerOptions() {
@@ -296,6 +327,21 @@
     return true;
   }
 
+  function stopTtsPlayback() {
+    if (ctx.ttsAudio) {
+      try {
+        ctx.ttsAudio.pause();
+        ctx.ttsAudio.currentTime = 0;
+      } catch {}
+    }
+    if (ctx.ttsObjectUrl) {
+      try {
+        URL.revokeObjectURL(ctx.ttsObjectUrl);
+      } catch {}
+      ctx.ttsObjectUrl = "";
+    }
+  }
+
   function saveVoiceEnabled() {
     localStorage.setItem(VOICE_ENABLED_KEY, ctx.voiceEnabled ? "1" : "0");
   }
@@ -304,10 +350,8 @@
     ctx.voiceEnabled = !ctx.voiceEnabled;
     saveVoiceEnabled();
 
-    if (!ctx.voiceEnabled && typeof window !== "undefined" && "speechSynthesis" in window) {
-      try {
-        window.speechSynthesis.cancel();
-      } catch {}
+    if (!ctx.voiceEnabled) {
+      stopTtsPlayback();
       setTip("已关闭语音播报。");
     } else if (ctx.voiceEnabled) {
       ctx.voicePrimed = false;
@@ -317,21 +361,21 @@
     updateVoiceUi();
   }
 
-  function testVoice(fromButton) {
+  async function testVoice(fromButton) {
     if (!ctx.voiceEnabled) {
       setTip("语音播报已关闭，请先开启。", true);
       updateVoiceUi();
       return;
     }
 
-    const ok = speak("语音播报测试，已连接。", true);
+    const ok = await speakByTts("测试", 8, true);
     if (ok) {
       ctx.voicePrimed = true;
       if (fromButton) {
         setTip("语音已激活，后续会自动播报。");
       }
     } else if (fromButton) {
-      setTip("当前浏览器不支持语音播报。", true);
+      setTip("TTS 服务不可用，请检查服务是否已启动。", true);
     }
     updateVoiceUi();
   }
@@ -671,7 +715,13 @@
       setTip("请先输入或创建房间号。", true);
       return;
     }
-    const link = `${window.location.origin}${window.location.pathname}?room=${encodeURIComponent(roomId)}`;
+    const linkUrl = new URL(`${window.location.origin}${window.location.pathname}`);
+    linkUrl.searchParams.set("room", roomId);
+    const currentTts = normalizeTtsBaseUrl(ctx.ttsBaseUrl);
+    if (currentTts && currentTts !== defaultTtsBaseUrl()) {
+      linkUrl.searchParams.set("tts", currentTts);
+    }
+    const link = linkUrl.toString();
 
     try {
       await navigator.clipboard.writeText(link);
@@ -683,6 +733,7 @@
 
   function leaveRoom() {
     stopPolling();
+    stopTtsPlayback();
     ctx.roomId = "";
     ctx.state = null;
     ctx.lastRoundSeq = 0;
@@ -773,81 +824,68 @@
 
     const bankerName = record.bankerName || "庄家";
     const bankerDelta = Number(record.bankerDelta || 0);
-    let deltaText = "打平";
-    if (bankerDelta > 0) deltaText = `净赢${fmt(Math.abs(bankerDelta))}分`;
-    if (bankerDelta < 0) deltaText = `净输${fmt(Math.abs(bankerDelta))}分`;
-    const speakText = `庄家${bankerName}${deltaText}。`;
-    const ok = speak(speakText, false);
-    if (!ok && ctx.voiceEnabled && !ctx.voicePrimed) {
-      dom.voiceHint.textContent = "该设备需先点一次“测试语音”以激活播报。";
-    }
+    speakByTts(bankerName, bankerDelta, false).then((ok) => {
+      if (ok) return;
+      if (!ctx.voiceEnabled) return;
+      if (!ctx.voicePrimed) {
+        dom.voiceHint.textContent = "该设备需先点一次“测试语音”以激活自动播报。";
+      } else {
+        dom.voiceHint.textContent = `TTS 服务不可用，请检查：${ctx.ttsBaseUrl}`;
+      }
+    });
   }
 
-  function speak(text, forcePrime) {
-    if (!text) return;
+  function ttsAnnounceUrl(name, delta) {
+    const base = normalizeTtsBaseUrl(ctx.ttsBaseUrl) || defaultTtsBaseUrl();
+    const qp = new URLSearchParams({
+      name: String(name || "庄家"),
+      delta: String(Number(delta || 0))
+    });
+    return `${base}/announce?${qp.toString()}`;
+  }
+
+  async function speakByTts(name, delta, forcePrime) {
     if (!ctx.voiceEnabled) return false;
-    if (typeof window === "undefined" || !("speechSynthesis" in window)) return false;
+    if (typeof window === "undefined" || typeof window.fetch !== "function" || typeof window.Audio !== "function") return false;
     if (!ctx.voicePrimed && !forcePrime) return false;
+
     try {
-      window.speechSynthesis.cancel();
-      const utter = new SpeechSynthesisUtterance(text);
-      utter.lang = "zh-CN";
-      utter.rate = 1;
-      utter.pitch = 1;
-      utter.volume = 1;
-      const voices = window.speechSynthesis.getVoices();
-      const voice = pickPreferredVoice(voices);
-      if (voice) utter.voice = voice;
-      window.speechSynthesis.speak(utter);
+      const url = ttsAnnounceUrl(name, delta);
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) return false;
+
+      const blob = await res.blob();
+      if (!blob || blob.size <= 0) return false;
+
+      if (!ctx.ttsAudio) {
+        ctx.ttsAudio = new Audio();
+      }
+      const audio = ctx.ttsAudio;
+      audio.pause();
+
+      if (ctx.ttsObjectUrl) {
+        try {
+          URL.revokeObjectURL(ctx.ttsObjectUrl);
+        } catch {}
+      }
+      ctx.ttsObjectUrl = URL.createObjectURL(blob);
+      audio.src = ctx.ttsObjectUrl;
+      audio.currentTime = 0;
+      await audio.play();
       return true;
     } catch {
       return false;
     }
   }
 
-  function pickPreferredVoice(voices) {
-    if (!Array.isArray(voices) || voices.length === 0) return null;
-
-    const score = (voice) => {
-      const lang = String(voice.lang || "").toLowerCase();
-      const name = String(voice.name || "");
-      const nameLower = name.toLowerCase();
-
-      if (lang === "zh-cn" || lang.startsWith("zh-cn") || /普通话|mandarin/i.test(name)) {
-        return 300; // 首选普通话
-      }
-      if (lang.startsWith("zh") && !lang.startsWith("yue")) {
-        return 200; // 其他中文（非粤语）次选
-      }
-      if (lang.startsWith("yue") || /粤/.test(name)) {
-        return 100; // 找不到普通话时降级到粤语等中文语音
-      }
-      if (/chinese|中文/.test(nameLower)) {
-        return 80; // 最后的中文关键词兜底
-      }
-      return 0;
-    };
-
-    let best = null;
-    let bestScore = -1;
-    for (const voice of voices) {
-      const s = score(voice);
-      if (s > bestScore) {
-        best = voice;
-        bestScore = s;
-      }
-    }
-    return bestScore > 0 ? best : null;
-  }
-
   function updateVoiceUi() {
     if (!dom.voiceToggleBtn || !dom.voiceHint) return;
-    const supported = typeof window !== "undefined" && "speechSynthesis" in window;
+    const supported = typeof window !== "undefined" && typeof window.fetch === "function" && typeof window.Audio === "function";
     if (!supported) {
       dom.voiceToggleBtn.textContent = "语音：不可用";
       dom.voiceToggleBtn.disabled = true;
       dom.voiceTestBtn.disabled = true;
-      dom.voiceHint.textContent = "当前浏览器不支持语音播报。";
+      dom.voiceHint.textContent = "当前浏览器不支持音频播放。";
       return;
     }
 
@@ -859,8 +897,8 @@
       return;
     }
     dom.voiceHint.textContent = ctx.voicePrimed
-      ? "语音已激活（仅庄家设备会自动播报）。"
-      : "手机端请先点一次“测试语音”激活自动播报（仅庄家设备生效）。";
+      ? `语音已激活（仅庄家设备会自动播报）。TTS：${ctx.ttsBaseUrl}`
+      : `请先点一次“测试语音”激活自动播报（仅庄家设备生效）。TTS：${ctx.ttsBaseUrl}`;
   }
 
   function isMyPanelFocused() {
