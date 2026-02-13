@@ -1,0 +1,183 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>牛牛联机积分台</title>
+<style>
+:root{--bg1:#082b22;--bg2:#14503e;--card:#fff7df;--line:#c8a874;--txt:#2c1b12;--ok:#1f6d40;--bad:#a42f18;--btn:#b2381b;--btn2:#2f7f50}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;color:var(--txt);font-family:"STKaiti","KaiTi","Noto Serif SC",serif;background:radial-gradient(circle at 10% 8%,#f7d09a66,transparent 26%),linear-gradient(150deg,var(--bg1),var(--bg2))}
+main{width:min(980px,95vw);margin:12px auto 24px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;box-shadow:0 8px 24px #0003;margin-bottom:10px}
+h1{margin:0 0 6px;font-size:24px}p{margin:0;color:#614022}
+h2{margin:0 0 10px;font-size:18px;border-left:4px solid #b33619;padding-left:8px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:10px}
+label{display:flex;flex-direction:column;gap:4px;font-size:14px}
+input,select,textarea,button{font:inherit}
+input,select,textarea{width:100%;padding:8px;border-radius:8px;border:1px solid #8c6740;background:#fff9ea;color:#2d1b12}
+textarea{min-height:72px;resize:vertical}
+.row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.row3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+button{border:0;border-radius:999px;padding:8px 12px;cursor:pointer}
+.primary{background:var(--btn);color:#fff}
+.secondary{background:var(--btn2);color:#fff}
+.muted{background:#dfc89f;color:#3f280f}
+.warn{background:#e4b4a6;color:#5d1309}
+.tip{min-height:20px;color:#663711;font-size:14px;margin-top:6px}
+.small{font-size:13px;color:#694829}
+table{width:100%;border-collapse:collapse;table-layout:fixed;background:#fffdf7}
+th,td{border-bottom:1px solid #eadabc;padding:6px;font-size:13px;text-align:left;vertical-align:top;word-break:break-word}
+th{background:#ffe9bf;color:#5a3516}
+.badge{display:inline-block;padding:2px 7px;border-radius:999px;background:#2f7f5030;color:#1f623b;font-size:12px}
+.win{color:var(--ok);font-weight:700}.lose{color:var(--bad);font-weight:700}
+.self-name{font-weight:800}
+.hidden{display:none}
+@media (max-width:760px){h1{font-size:22px}.row,.row3{grid-template-columns:1fr}th,td{font-size:12px}}
+</style>
+</head>
+<body>
+<main>
+  <section class="card">
+    <h1>牛牛联机积分台</h1>
+    <p>每人用手机认领自己的身份并提交。服务端会在全员提交后自动比牌并结算。</p>
+  </section>
+
+  <section class="card">
+    <h2>房间</h2>
+    <div class="row">
+      <label>房间号
+        <input id="roomIdInput" placeholder="例如 A8K2D9" maxlength="8" />
+      </label>
+      <div class="actions" style="align-items:flex-end">
+        <button id="joinBtn" class="secondary" type="button">加入房间</button>
+        <button id="copyLinkBtn" class="muted" type="button">复制邀请链接</button>
+        <button id="leaveRoomBtn" class="warn hidden" type="button">退出当前房间</button>
+      </div>
+    </div>
+
+    <div id="createSection">
+      <div style="height:8px"></div>
+      <div class="small">创建新房间（房主操作）</div>
+      <label style="margin-top:6px">玩家名单（逗号或换行分隔）
+        <textarea id="createPlayers">玩家1
+玩家2
+玩家3
+玩家4</textarea>
+      </label>
+      <div class="row3" style="margin-top:8px">
+        <label>对局模式
+          <select id="createGameMode">
+            <option value="cards">牌型对战模式</option>
+            <option value="manual" selected>自主积分模式</option>
+          </select>
+        </label>
+        <label>庄家
+          <select id="createBanker"></select>
+        </label>
+        <label id="createBaseWrap">底分
+          <input id="createBase" type="number" min="0.1" step="0.1" value="1" />
+        </label>
+        <label id="createBankerMulWrap">庄倍数
+          <input id="createBankerMul" type="number" min="0.1" step="0.1" value="1" />
+        </label>
+      </div>
+      <label id="createMultiplierWrap" style="margin-top:8px">牌型倍率取值
+        <select id="createMode">
+          <option value="winner">按赢家牌型</option>
+          <option value="banker">按庄家牌型</option>
+          <option value="idle">按闲家牌型</option>
+        </select>
+      </label>
+      <div class="actions">
+        <button id="createBtn" class="primary" type="button">创建房间</button>
+      </div>
+    </div>
+    <div id="roomMeta" class="small" style="margin-top:8px"></div>
+    <div class="actions">
+      <button id="voiceToggleBtn" class="muted" type="button">语音：开</button>
+      <button id="voiceTestBtn" class="muted" type="button">测试语音</button>
+    </div>
+    <div id="voiceHint" class="small"></div>
+  </section>
+
+  <section class="grid">
+    <section class="card">
+      <h2>积分榜</h2>
+      <table>
+        <thead><tr><th style="width:18%">排名</th><th style="width:42%">玩家</th><th style="width:40%">总分</th></tr></thead>
+        <tbody id="scoreRows"></tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>我的录入</h2>
+      <div id="myPanel" class="small">先加入房间并认领身份。</div>
+      <div class="actions">
+        <button id="submitBtn" class="primary" type="button">提交本局</button>
+      </div>
+      <div id="myTip" class="tip"></div>
+    </section>
+
+    <section class="card">
+      <h2>身份认领</h2>
+      <table>
+        <thead><tr><th style="width:26%">玩家</th><th style="width:18%">角色</th><th style="width:16%">提交</th><th style="width:40%">操作</th></tr></thead>
+        <tbody id="seatRows"></tbody>
+      </table>
+      <div class="actions">
+        <button id="releaseBtn" class="muted" type="button">释放我的身份</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>房间状态</h2>
+      <div id="roundInfo" class="small">未连接房间。</div>
+      <div id="hostPanel" class="hidden" style="margin-top:8px">
+        <div class="row">
+          <label>切换庄家
+            <select id="hostBankerSelect"></select>
+          </label>
+          <div class="actions" style="align-items:flex-end">
+            <button id="changeBankerBtn" class="muted" type="button">仅切庄</button>
+            <button id="startNewRoundBtn" class="secondary" type="button">开新局</button>
+          </div>
+        </div>
+        <div class="small" style="margin-top:10px">玩家管理（房主）</div>
+        <div class="row" style="margin-top:6px">
+          <label>新增玩家名称
+            <input id="hostNewPlayerName" maxlength="18" placeholder="例如 玩家5" />
+          </label>
+          <div class="actions" style="align-items:flex-end">
+            <button id="addHostPlayerBtn" class="secondary" type="button">添加玩家</button>
+          </div>
+        </div>
+        <table style="margin-top:8px">
+          <thead><tr><th style="width:30%">玩家</th><th style="width:20%">角色</th><th style="width:20%">认领</th><th style="width:30%">操作</th></tr></thead>
+          <tbody id="hostPlayerRows"></tbody>
+        </table>
+        <div class="actions">
+          <button id="undoBtn" class="warn" type="button">撤销上一局</button>
+          <button id="resetBtn" class="warn" type="button">清空战绩</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" style="grid-column:1/-1">
+      <h2>最近对局</h2>
+      <table>
+        <thead><tr><th style="width:20%">时间</th><th style="width:12%">局号</th><th style="width:13%">庄家</th><th style="width:40%">明细</th><th style="width:15%">庄家合计</th></tr></thead>
+        <tbody id="historyRows"></tbody>
+      </table>
+      <div class="actions">
+        <button id="historyPrevBtn" class="muted" type="button">上一页</button>
+        <span id="historyPageInfo" class="small">第 1 / 1 页</span>
+        <button id="historyNextBtn" class="muted" type="button">下一页</button>
+      </div>
+    </section>
+  </section>
+</main>
+<script src="app.js"></script>
+</body>
+</html>
