@@ -146,7 +146,7 @@ function resolveMul(room, mode, idleTypeId, bankerTypeId, idleWin) {
 function parsePlayers(rawPlayers) {
   const arr = Array.isArray(rawPlayers) ? rawPlayers : [];
   const out = arr.map((name, i) => safeName(name, i + 1)).filter(Boolean);
-  if (out.length < 2) return ["玩家1", "玩家2", "玩家3", "玩家4"];
+  if (out.length < 2) return ["玩家1", "玩家2"];
   return out.slice(0, 10);
 }
 
