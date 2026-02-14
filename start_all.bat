@@ -65,7 +65,7 @@ echo Starting TTS Service...
 start "Niuniu TTS Service" /D "%TTS_DIR%" cmd /k "python tts_server.py"
 
 timeout /t 2 >nul
-start "" "http://localhost:%TOOL_PORT%/?tts=http://127.0.0.1:%TTS_PORT%"
+start "" "http://localhost:%TOOL_PORT%/"
 
 echo.
 echo Services started.

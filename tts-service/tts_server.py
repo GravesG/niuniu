@@ -33,18 +33,37 @@ TEMPLATES = {
   "win": [
     "大杀四方，庄家{name}本局净赢{score}分。",
     "状态在线，庄家{name}稳稳收下{score}分。",
-    "节奏拉满，庄家{name}这一局进账{score}分。"
+    "节奏拉满，庄家{name}这一局进账{score}分。",
+    "手气爆棚，庄家{name}直接带走{score}分。",
+    "气势如虹，庄家{name}笑纳{score}分。",
+    "操作丝滑，庄家{name}轻松斩获{score}分。",
+    "牌面安排得明明白白，庄家{name}拿下{score}分。",
+    "财神站台，庄家{name}又进账{score}分。",
+    "对手一脸问号，庄家{name}顺走{score}分。",
+    "稳中带秀，庄家{name}把{score}分收入囊中。",
+    "这一波操作直接封神，庄家{name}狂揽{score}分。",
+    "局势尽在掌握，庄家{name}优雅收割{score}分。"
   ],
   "lose": [
     "风水轮流转，庄家{name}本局净输{score}分。",
     "这局有点可惜，庄家{name}让出{score}分。",
-    "暂时失利，庄家{name}本局掉了{score}分。"
+    "暂时失利，庄家{name}本局掉了{score}分。",
+    "手气打了个盹，庄家{name}送出{score}分。",
+    "差那么一点点，庄家{name}惜败{score}分。",
+    "运气请假中，庄家{name}让出了{score}分。",
+    "对手火力全开，庄家{name}本局退让{score}分。",
+    "节奏没踩稳，庄家{name}掉了{score}分。",
+    "翻车现场，庄家{name}遗憾失去{score}分。",
+    "小风波而已，庄家{name}暂失{score}分。",
+    "这局被安排得明明白白，庄家{name}吐出{score}分。",
+    "笑着流泪，庄家{name}本局交出{score}分。"
   ],
   "tie": [
     "势均力敌，庄家{name}本局打平。",
     "双方握手言和，庄家{name}本局平局。"
   ]
 }
+
 
 
 def _safe_name(name: str) -> str:

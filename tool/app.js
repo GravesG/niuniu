@@ -166,6 +166,23 @@
     return raw.replace(/\/+$/, "");
   }
 
+  function isLoopbackHost(host) {
+    const h = String(host || "").toLowerCase();
+    return h === "localhost" || h === "127.0.0.1" || h === "::1";
+  }
+
+  function isUnsafeLoopbackTts(baseUrl) {
+    const txt = normalizeTtsBaseUrl(baseUrl);
+    if (!txt) return false;
+
+    try {
+      const parsed = new URL(txt);
+      return isLoopbackHost(parsed.hostname) && !isLoopbackHost(window.location.hostname);
+    } catch {
+      return false;
+    }
+  }
+
   function defaultTtsBaseUrl() {
     const proto = window.location.protocol === "https:" ? "https:" : "http:";
     return `${proto}//${window.location.hostname}:8000`;
@@ -174,13 +191,13 @@
   function loadTtsBaseUrl() {
     const urlObj = new URL(window.location.href);
     const fromQuery = normalizeTtsBaseUrl(urlObj.searchParams.get("tts"));
-    if (fromQuery) {
+    if (fromQuery && !isUnsafeLoopbackTts(fromQuery)) {
       localStorage.setItem(TTS_BASE_KEY, fromQuery);
       return fromQuery;
     }
 
     const fromStorage = normalizeTtsBaseUrl(localStorage.getItem(TTS_BASE_KEY));
-    if (fromStorage) return fromStorage;
+    if (fromStorage && !isUnsafeLoopbackTts(fromStorage)) return fromStorage;
 
     const fallback = defaultTtsBaseUrl();
     localStorage.setItem(TTS_BASE_KEY, fallback);
@@ -717,10 +734,6 @@
     }
     const linkUrl = new URL(`${window.location.origin}${window.location.pathname}`);
     linkUrl.searchParams.set("room", roomId);
-    const currentTts = normalizeTtsBaseUrl(ctx.ttsBaseUrl);
-    if (currentTts && currentTts !== defaultTtsBaseUrl()) {
-      linkUrl.searchParams.set("tts", currentTts);
-    }
     const link = linkUrl.toString();
 
     try {
