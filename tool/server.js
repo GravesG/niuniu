@@ -4,6 +4,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const { URL } = require("url");
+const { WebSocketServer } = require("ws");
 
 const HOST = "0.0.0.0";
 const PORT = Number(process.env.PORT || 5173);
@@ -36,6 +37,70 @@ const TYPE_TEMPLATE = [
 ];
 
 const rooms = new Map();
+const wsClientsByClientId = new Map();
+
+function wsSend(socket, payload) {
+  if (!socket || socket.readyState !== 1) return false;
+  try {
+    socket.send(JSON.stringify(payload));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function unbindSocket(socket) {
+  const prevClientId = String(socket._boundClientId || "").trim();
+  if (!prevClientId) return;
+
+  const set = wsClientsByClientId.get(prevClientId);
+  if (set) {
+    set.delete(socket);
+    if (!set.size) wsClientsByClientId.delete(prevClientId);
+  }
+  socket._boundClientId = "";
+}
+
+function bindSocket(clientId, socket) {
+  const cid = String(clientId || "").trim();
+  if (!cid) return false;
+  unbindSocket(socket);
+
+  let set = wsClientsByClientId.get(cid);
+  if (!set) {
+    set = new Set();
+    wsClientsByClientId.set(cid, set);
+  }
+  set.add(socket);
+  socket._boundClientId = cid;
+  return true;
+}
+
+function broadcastToRoom(room, payload) {
+  if (!room || !payload) return 0;
+  const targets = new Set();
+  room.players.forEach((p) => {
+    if (p.owner) targets.add(String(p.owner).trim());
+  });
+
+  let count = 0;
+  targets.forEach((clientId) => {
+    const sockets = wsClientsByClientId.get(clientId);
+    if (!sockets || !sockets.size) return;
+    sockets.forEach((socket) => {
+      if (wsSend(socket, payload)) count += 1;
+    });
+  });
+  return count;
+}
+
+function pushRoomUpdated(room) {
+  broadcastToRoom(room, {
+    type: "room_updated",
+    roomId: room.id,
+    ts: now()
+  });
+}
 
 function makeTypes() {
   return TYPE_TEMPLATE.map((x) => ({ id: x[0], name: x[1], rank: x[2], mul: x[3], on: x[4] }));
@@ -952,6 +1017,7 @@ async function handleApi(req, res, urlObj) {
       const clientId = String(body.clientId || "").trim();
       if (!clientId) throw Object.assign(new Error("clientId 缺失"), { code: 400 });
       claimSeat(room, String(body.playerId || ""), clientId);
+      pushRoomUpdated(room);
       sendJson(res, 200, { ok: true, state: project(room, clientId) });
       return;
     }
@@ -962,6 +1028,7 @@ async function handleApi(req, res, urlObj) {
       const clientId = String(body.clientId || "").trim();
       if (!clientId) throw Object.assign(new Error("clientId 缺失"), { code: 400 });
       releaseSeat(room, clientId);
+      pushRoomUpdated(room);
       sendJson(res, 200, { ok: true, state: project(room, clientId) });
       return;
     }
@@ -972,6 +1039,7 @@ async function handleApi(req, res, urlObj) {
       const clientId = String(body.clientId || "").trim();
       if (!clientId) throw Object.assign(new Error("clientId 缺失"), { code: 400 });
       addPlayer(room, clientId, body.name);
+      pushRoomUpdated(room);
       sendJson(res, 200, { ok: true, state: project(room, clientId) });
       return;
     }
@@ -982,6 +1050,7 @@ async function handleApi(req, res, urlObj) {
       const clientId = String(body.clientId || "").trim();
       if (!clientId) throw Object.assign(new Error("clientId 缺失"), { code: 400 });
       renamePlayer(room, clientId, String(body.playerId || ""), body.name);
+      pushRoomUpdated(room);
       sendJson(res, 200, { ok: true, state: project(room, clientId) });
       return;
     }
@@ -992,6 +1061,7 @@ async function handleApi(req, res, urlObj) {
       const clientId = String(body.clientId || "").trim();
       if (!clientId) throw Object.assign(new Error("clientId 缺失"), { code: 400 });
       removePlayer(room, clientId, String(body.playerId || ""));
+      pushRoomUpdated(room);
       sendJson(res, 200, { ok: true, state: project(room, clientId) });
       return;
     }
@@ -1003,6 +1073,17 @@ async function handleApi(req, res, urlObj) {
       if (!clientId) throw Object.assign(new Error("clientId 缺失"), { code: 400 });
       applySubmit(room, clientId, body.data || {});
       const settled = settleIfReady(room);
+      if (settled) {
+        broadcastToRoom(room, {
+          type: "settled",
+          roomId: room.id,
+          roundSeq: settled.roundSeq,
+          recordId: settled.id,
+          ts: settled.ts
+        });
+      } else {
+        pushRoomUpdated(room);
+      }
       sendJson(res, 200, { ok: true, settled: settled || null, state: project(room, clientId) });
       return;
     }
@@ -1012,6 +1093,7 @@ async function handleApi(req, res, urlObj) {
       const room = ensureRoom(body.roomId);
       const clientId = String(body.clientId || "").trim();
       setBanker(room, clientId, String(body.bankerId || ""));
+      pushRoomUpdated(room);
       sendJson(res, 200, { ok: true, state: project(room, clientId) });
       return;
     }
@@ -1021,6 +1103,7 @@ async function handleApi(req, res, urlObj) {
       const room = ensureRoom(body.roomId);
       const clientId = String(body.clientId || "").trim();
       changeGameMode(room, clientId, body.gameMode);
+      pushRoomUpdated(room);
       sendJson(res, 200, { ok: true, state: project(room, clientId) });
       return;
     }
@@ -1030,6 +1113,7 @@ async function handleApi(req, res, urlObj) {
       const room = ensureRoom(body.roomId);
       const clientId = String(body.clientId || "").trim();
       startNewRound(room, clientId);
+      pushRoomUpdated(room);
       sendJson(res, 200, { ok: true, state: project(room, clientId) });
       return;
     }
@@ -1039,6 +1123,7 @@ async function handleApi(req, res, urlObj) {
       const room = ensureRoom(body.roomId);
       const clientId = String(body.clientId || "").trim();
       undoLast(room, clientId);
+      pushRoomUpdated(room);
       sendJson(res, 200, { ok: true, state: project(room, clientId) });
       return;
     }
@@ -1048,6 +1133,7 @@ async function handleApi(req, res, urlObj) {
       const room = ensureRoom(body.roomId);
       const clientId = String(body.clientId || "").trim();
       resetRoom(room, clientId);
+      pushRoomUpdated(room);
       sendJson(res, 200, { ok: true, state: project(room, clientId) });
       return;
     }
@@ -1067,6 +1153,65 @@ const server = http.createServer(async (req, res) => {
   }
   serveStatic(urlObj.pathname, res);
 });
+
+const wss = new WebSocketServer({ server, path: "/ws" });
+wss.on("connection", (socket) => {
+  socket._boundClientId = "";
+  socket._alive = true;
+
+  socket.on("pong", () => {
+    socket._alive = true;
+  });
+
+  socket.on("message", (raw) => {
+    let msg;
+    try {
+      msg = JSON.parse(String(raw || ""));
+    } catch {
+      wsSend(socket, { type: "error", error: "WS JSON 解析失败" });
+      return;
+    }
+
+    if (!msg || typeof msg !== "object") return;
+    if (msg.type === "bind") {
+      const ok = bindSocket(msg.clientId, socket);
+      if (!ok) {
+        wsSend(socket, { type: "error", error: "clientId 无效" });
+        return;
+      }
+      wsSend(socket, { type: "bound", clientId: socket._boundClientId, now: now() });
+      return;
+    }
+
+    if (msg.type === "ping") {
+      wsSend(socket, { type: "pong", now: now() });
+    }
+  });
+
+  socket.on("close", () => {
+    unbindSocket(socket);
+  });
+
+  socket.on("error", () => {
+    unbindSocket(socket);
+  });
+});
+
+const wsHeartbeat = setInterval(() => {
+  wss.clients.forEach((socket) => {
+    if (socket._alive === false) {
+      try {
+        socket.terminate();
+      } catch {}
+      return;
+    }
+    socket._alive = false;
+    try {
+      socket.ping();
+    } catch {}
+  });
+}, 30000);
+wsHeartbeat.unref();
 
 server.listen(PORT, HOST, () => {
   const msg = [

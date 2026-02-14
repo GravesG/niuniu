@@ -27,6 +27,29 @@ if errorlevel 1 (
   exit /b 1
 )
 
+if exist "%TOOL_DIR%\package.json" (
+  pushd "%TOOL_DIR%"
+  node -e "require('ws')" >nul 2>nul
+  if errorlevel 1 (
+    where npm >nul 2>nul
+    if errorlevel 1 (
+      echo [ERROR] npm is not found in PATH.
+      popd
+      pause
+      exit /b 1
+    )
+    echo Installing Tool dependencies...
+    npm install
+    if errorlevel 1 (
+      echo [ERROR] Failed to install Tool dependencies.
+      popd
+      pause
+      exit /b 1
+    )
+  )
+  popd
+)
+
 where python >nul 2>nul
 if errorlevel 1 (
   echo [ERROR] Python is not found in PATH.

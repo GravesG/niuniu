@@ -53,6 +53,7 @@ start_all.bat
 
 ```bash
 cd tool
+npm install
 node server.js
 ```
 

@@ -3,6 +3,11 @@
   const ROOM_KEY = "niuniu-last-room";
   const VOICE_ENABLED_KEY = "niuniu-voice-enabled";
   const TTS_BASE_KEY = "niuniu-tts-base-url";
+  const ANNOUNCED_RECORD_KEY_PREFIX = "niuniu-last-announced-record";
+  const POLL_FAST_MS = 1500;
+  const POLL_WS_FALLBACK_MS = 10000;
+  const WS_RETRY_BASE_MS = 1000;
+  const WS_RETRY_MAX_MS = 10000;
   const RANK_DESC = ["K", "Q", "J", "10", "9", "8", "7", "6", "5", "4", "3", "2", "A"];
   const SUITS = [
     { id: "spade", label: "黑桃" },
@@ -67,11 +72,15 @@
     voicePrimed: false,
     ttsBaseUrl: loadTtsBaseUrl(),
     ttsAudio: null,
-    ttsObjectUrl: "",
-    pendingBankerId: ""
+    pendingBankerId: "",
+    ws: null,
+    wsRetryTimer: null,
+    wsReconnectMs: WS_RETRY_BASE_MS,
+    wsRefreshTimer: null
   };
 
   bind();
+  initWebSocket();
   refreshCreateBankerOptions();
   refreshCreateModeUi();
   restoreRoomAndAutoJoin();
@@ -231,11 +240,127 @@
     return data;
   }
 
+  function wsConnected() {
+    return !!ctx.ws && ctx.ws.readyState === WebSocket.OPEN;
+  }
+
+  function currentPollMs() {
+    return wsConnected() ? POLL_WS_FALLBACK_MS : POLL_FAST_MS;
+  }
+
+  function websocketUrl() {
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    return `${proto}//${window.location.host}/ws`;
+  }
+
+  function sendWsBind() {
+    if (!wsConnected()) return false;
+    try {
+      ctx.ws.send(JSON.stringify({
+        type: "bind",
+        clientId: ctx.clientId
+      }));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function scheduleWsRefresh(delayMs) {
+    if (!ctx.roomId) return;
+    if (ctx.wsRefreshTimer) return;
+    ctx.wsRefreshTimer = setTimeout(() => {
+      ctx.wsRefreshTimer = null;
+      fetchState(true).catch(() => {});
+    }, Math.max(0, Number(delayMs) || 0));
+  }
+
+  function clearWsRetry() {
+    if (!ctx.wsRetryTimer) return;
+    clearTimeout(ctx.wsRetryTimer);
+    ctx.wsRetryTimer = null;
+  }
+
+  function scheduleWsReconnect() {
+    if (ctx.wsRetryTimer) return;
+    const delay = Math.min(WS_RETRY_MAX_MS, Math.max(WS_RETRY_BASE_MS, ctx.wsReconnectMs || WS_RETRY_BASE_MS));
+    ctx.wsRetryTimer = setTimeout(() => {
+      ctx.wsRetryTimer = null;
+      initWebSocket();
+    }, delay);
+    ctx.wsReconnectMs = Math.min(WS_RETRY_MAX_MS, delay * 2);
+  }
+
+  function restartPollingForTransport() {
+    if (!ctx.roomId) return;
+    startPolling();
+  }
+
+  function initWebSocket() {
+    if (typeof window === "undefined" || typeof window.WebSocket !== "function") return;
+    if (ctx.ws && (ctx.ws.readyState === WebSocket.OPEN || ctx.ws.readyState === WebSocket.CONNECTING)) return;
+
+    let ws;
+    try {
+      ws = new WebSocket(websocketUrl());
+    } catch {
+      scheduleWsReconnect();
+      return;
+    }
+
+    ctx.ws = ws;
+
+    ws.addEventListener("open", () => {
+      if (ctx.ws !== ws) return;
+      ctx.wsReconnectMs = WS_RETRY_BASE_MS;
+      clearWsRetry();
+      sendWsBind();
+      restartPollingForTransport();
+    });
+
+    ws.addEventListener("message", (ev) => {
+      let msg;
+      try {
+        msg = JSON.parse(String(ev.data || ""));
+      } catch {
+        return;
+      }
+
+      if (!msg || typeof msg !== "object") return;
+      if (msg.type === "settled") {
+        if (msg.roomId && ctx.roomId && msg.roomId === ctx.roomId) {
+          scheduleWsRefresh(0);
+        }
+        return;
+      }
+      if (msg.type === "room_updated") {
+        if (msg.roomId && ctx.roomId && msg.roomId === ctx.roomId) {
+          scheduleWsRefresh(60);
+        }
+      }
+    });
+
+    ws.addEventListener("close", () => {
+      if (ctx.ws !== ws) return;
+      ctx.ws = null;
+      restartPollingForTransport();
+      scheduleWsReconnect();
+    });
+
+    ws.addEventListener("error", () => {
+      if (ctx.ws !== ws) return;
+      try {
+        ws.close();
+      } catch {}
+    });
+  }
+
   function startPolling() {
     stopPolling();
+    const pollMs = currentPollMs();
     ctx.poller = setInterval(() => {
       fetchState(true).catch(() => {});
-    }, 1500);
+    }, pollMs);
   }
 
   function stopPolling() {
@@ -349,13 +474,9 @@
       try {
         ctx.ttsAudio.pause();
         ctx.ttsAudio.currentTime = 0;
+        ctx.ttsAudio.removeAttribute("src");
+        ctx.ttsAudio.load();
       } catch {}
-    }
-    if (ctx.ttsObjectUrl) {
-      try {
-        URL.revokeObjectURL(ctx.ttsObjectUrl);
-      } catch {}
-      ctx.ttsObjectUrl = "";
     }
   }
 
@@ -828,6 +949,10 @@
   function announceSettlement(record) {
     if (!record || !record.id) return;
     if (ctx.lastAnnouncedHistoryId === record.id) return;
+    if (alreadyAnnouncedInOtherTab(record.id)) {
+      ctx.lastAnnouncedHistoryId = record.id;
+      return;
+    }
     ctx.lastAnnouncedHistoryId = record.id;
 
     const isBankerDevice = !!ctx.state && ctx.state.myRole === "banker" && ctx.state.myPlayerId === ctx.state.bankerId;
@@ -848,6 +973,19 @@
     });
   }
 
+  function alreadyAnnouncedInOtherTab(recordId) {
+    if (!recordId || !ctx.roomId) return false;
+    const key = `${ANNOUNCED_RECORD_KEY_PREFIX}:${ctx.roomId}`;
+    try {
+      const last = String(localStorage.getItem(key) || "");
+      if (last && last === recordId) return true;
+      localStorage.setItem(key, recordId);
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
   function ttsAnnounceUrl(name, delta) {
     const base = normalizeTtsBaseUrl(ctx.ttsBaseUrl) || defaultTtsBaseUrl();
     const qp = new URLSearchParams({
@@ -859,32 +997,23 @@
 
   async function speakByTts(name, delta, forcePrime) {
     if (!ctx.voiceEnabled) return false;
-    if (typeof window === "undefined" || typeof window.fetch !== "function" || typeof window.Audio !== "function") return false;
+    if (typeof window === "undefined" || typeof window.Audio !== "function") return false;
     if (!ctx.voicePrimed && !forcePrime) return false;
 
     try {
       const url = ttsAnnounceUrl(name, delta);
-      const res = await fetch(url, { cache: "no-store" });
-      if (!res.ok) return false;
-
-      const blob = await res.blob();
-      if (!blob || blob.size <= 0) return false;
-
       if (!ctx.ttsAudio) {
         ctx.ttsAudio = new Audio();
+        ctx.ttsAudio.preload = "auto";
       }
       const audio = ctx.ttsAudio;
       audio.pause();
-
-      if (ctx.ttsObjectUrl) {
-        try {
-          URL.revokeObjectURL(ctx.ttsObjectUrl);
-        } catch {}
-      }
-      ctx.ttsObjectUrl = URL.createObjectURL(blob);
-      audio.src = ctx.ttsObjectUrl;
       audio.currentTime = 0;
-      await audio.play();
+      audio.src = url;
+      const playPromise = audio.play();
+      if (playPromise && typeof playPromise.then === "function") {
+        await playPromise;
+      }
       return true;
     } catch {
       return false;
