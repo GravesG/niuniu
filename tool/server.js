@@ -7,7 +7,7 @@ const { URL } = require("url");
 const { WebSocketServer } = require("ws");
 
 const HOST = "0.0.0.0";
-const PORT = Number(process.env.PORT || 5173);
+const PORT = Number(process.env.PORT || 5273);
 const ROOT = __dirname;
 
 const SUITS = [

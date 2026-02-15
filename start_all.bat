@@ -4,7 +4,7 @@ setlocal
 set "ROOT_DIR=%~dp0"
 set "TOOL_DIR=%ROOT_DIR%tool"
 set "TTS_DIR=%ROOT_DIR%tts-service"
-set "TOOL_PORT=5173"
+set "TOOL_PORT=5273"
 set "TTS_PORT=8000"
 
 if not exist "%TOOL_DIR%\server.js" (
@@ -82,7 +82,7 @@ for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:":%TTS_PORT% .*LISTENIN
 )
 
 echo Starting Tool Service...
-start "Niuniu Tool Service" /D "%TOOL_DIR%" cmd /k "node server.js"
+start "Niuniu Tool Service" /D "%TOOL_DIR%" cmd /k "set PORT=%TOOL_PORT% && node server.js"
 
 echo Starting TTS Service...
 start "Niuniu TTS Service" /D "%TTS_DIR%" cmd /k "python tts_server.py"

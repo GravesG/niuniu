@@ -44,7 +44,7 @@ start_all.bat
 
 - 检查 Node/Python
 - 自动安装 TTS 依赖（若缺失）
-- 启动 `tool`（`5173`）和 `tts-service`（`8000`）
+- 启动 `tool`（`5273`）和 `tts-service`（`8000`）
 - 自动打开浏览器
 
 ## 手动启动（跨平台）
@@ -67,8 +67,8 @@ python tts_server.py
 
 3. 访问页面
 
-- 无 TTS：`http://localhost:5173`
-- 指定 TTS：`http://localhost:5173/?tts=http://127.0.0.1:8000`
+- 无 TTS：`http://localhost:5273`
+- 指定 TTS：`http://localhost:5273/?tts=http://127.0.0.1:8000`
 
 ## 常见问题
 
